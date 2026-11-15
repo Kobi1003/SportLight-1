@@ -4,7 +4,6 @@ import {
   LayoutDashboard,
   UserCircle,
   BotMessageSquare,
-  Trophy,
   BarChart3,
 } from "lucide-react";
 
@@ -51,18 +50,6 @@ export function MainSidebar() {
               <Link href="/profile">
                 <UserCircle />
                 <span>Profile</span>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-           <SidebarMenuItem>
-            <SidebarMenuButton
-              asChild
-              isActive={isActive("/leaderboard")}
-              tooltip={{ children: "Leaderboard" }}
-            >
-              <Link href="/leaderboard">
-                <Trophy />
-                <span>Leaderboard</span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
