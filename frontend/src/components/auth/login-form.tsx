@@ -66,6 +66,8 @@ export function LoginForm() {
   const [role, setRole] = useState<Role>('player');
   const { addPlayer } = usePlayers();
   const { addClub } = useClubs();
+  const [signinEmail, setSigninEmail] = useState('');
+  const [signinPassword, setSigninPassword] = useState('');
 
   const playerForm = useForm<z.infer<typeof playerSignupSchema>>({
     resolver: zodResolver(playerSignupSchema),
@@ -89,6 +91,7 @@ export function LoginForm() {
   });
 
   async function onPlayerSubmit(values: z.infer<typeof playerSignupSchema>) {
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
     const newPlayer = {
       name: values.name,
       sport: values.sport,
@@ -108,25 +111,81 @@ export function LoginForm() {
     };
     
     try {
-        await addPlayer(newPlayer);
+        // 1. Save to MongoDB via backend API
+        const res = await fetch(`${apiBase}/auth/signup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: values.name,
+            email: values.email,
+            password: values.password,
+            role: 'player',
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.message || 'Signup failed');
+        }
+
+        if (data.token) {
+          localStorage.setItem('token', data.token);
+          // Update player profile with extra details (sport, age, gender)
+          await fetch(`${apiBase}/player/me`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${data.token}`,
+            },
+            body: JSON.stringify({
+              name: values.name,
+              sport: values.sport,
+              age: values.age,
+              gender: values.gender,
+            }),
+          }).catch(() => {});
+        }
+
         localStorage.setItem('userRole', 'player');
         toast({
-          title: "Player Account Created",
-          description: "Welcome! Your basic profile is created. You can add more details on your profile page.",
+          title: "Player Account Created & Saved to MongoDB!",
+          description: "Welcome! Your account and profile have been stored in the database.",
         });
         router.push(`/dashboard`);
-    } catch(e) {
+    } catch(e: any) {
         console.error(e);
         toast({
           variant: "destructive",
           title: "Error creating profile",
-          description: "There was an issue saving your profile.",
+          description: e.message || "There was an issue saving your profile.",
         });
     }
   }
 
   async function onRecruiterSubmit(values: z.infer<typeof recruiterSignupSchema>) {
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
     try {
+        // Save to MongoDB via backend API
+        const res = await fetch(`${apiBase}/auth/signup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: values.recruiterName,
+            email: values.email,
+            password: values.password,
+            role: 'club',
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.message || 'Signup failed');
+        }
+
+        if (data.token) {
+          localStorage.setItem('token', data.token);
+        }
+
         await addClub({
           name: `${values.recruiterName}'s Club`,
           league: "Premier League",
@@ -137,33 +196,64 @@ export function LoginForm() {
         });
         localStorage.setItem('userRole', 'recruiter');
         toast({
-          title: "Recruiter Account Created",
-          description: `Welcome, ${values.recruiterName}! You can now complete your club profile.`,
+          title: "Recruiter Account Created & Saved to MongoDB!",
+          description: `Welcome, ${values.recruiterName}! Account saved in database.`,
         });
         router.push(`/dashboard`);
-    } catch(e) {
+    } catch(e: any) {
         console.error(e);
         toast({
           variant: "destructive",
           title: "Error creating club profile",
-          description: "There was an issue saving the club profile.",
+          description: e.message || "There was an issue saving the club profile.",
         });
     }
   }
 
-  const handleSignIn = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSignIn = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const email = signinEmail.trim();
+    const password = signinPassword;
     const roleName = role === 'player' ? 'Player' : 'Recruiter';
-    localStorage.setItem('userRole', role);
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+
+    if (!email || !password) {
+      toast({ variant: "destructive", title: "Sign In Failed", description: "Please enter your email and password." });
+      return;
+    }
     
-    toast({
-      title: `Signed In as ${roleName} Successfully`,
-      description: "Redirecting you...",
-    });
-    
-    setTimeout(() => {
-        router.push("/dashboard");
-    }, 1500);
+    try {
+      const res = await fetch(`${apiBase}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || 'Invalid credentials');
+      }
+
+      if (data.token) {
+        localStorage.setItem('token', data.token);
+      }
+      localStorage.setItem('userRole', data.role || role);
+      
+      toast({
+        title: `Signed In Successfully`,
+        description: `Connected to MongoDB. Redirecting you...`,
+      });
+      
+      setTimeout(() => {
+          router.push("/dashboard");
+      }, 1000);
+    } catch (e: any) {
+      toast({
+        variant: "destructive",
+        title: "Sign In Failed",
+        description: e.message || "Please check your email and password.",
+      });
+    }
   };
 
   const handleGoogleSignIn = () => {
@@ -228,14 +318,24 @@ export function LoginForm() {
                 <Label htmlFor="email-signin">Email</Label>
                 <Input
                   id="email-signin"
+                  name="email-signin"
                   type="email"
                   placeholder="m@example.com"
                   required
+                  value={signinEmail}
+                  onChange={(e) => setSigninEmail(e.target.value)}
                 />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="password-signin">Password</Label>
-                <Input id="password-signin" type="password" required />
+                <Input
+                  id="password-signin"
+                  name="password-signin"
+                  type="password"
+                  required
+                  value={signinPassword}
+                  onChange={(e) => setSigninPassword(e.target.value)}
+                />
               </div>
             </CardContent>
             <CardFooter className="flex-col gap-4">

@@ -3,7 +3,10 @@ import mongoose from "mongoose";
 const clubSchema = new mongoose.Schema(
   {
     name: String,
+    league: String,
+    location: String,
     address: String,
+    description: String,
     foundationDate: String,
     createdAt: String,
     contactPerson: String,
@@ -11,7 +14,8 @@ const clubSchema = new mongoose.Schema(
     contactEmail: String,
     logo: String,
     affiliation: String,
-    profileCompleted: { type: Boolean, default: false }, // new
+    scoutingFocus: [String],
+    profileCompleted: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

@@ -24,9 +24,9 @@ export const signup = async (req, res) => {
     // Create empty profile based on role
     let profile;
     if (role === "player") {
-      profile = await Player.create({});
+      profile = await Player.create({ name, email });
     } else {
-      profile = await Club.create({});
+      profile = await Club.create({ name, contactEmail: email });
     }
 
     const user = await User.create({

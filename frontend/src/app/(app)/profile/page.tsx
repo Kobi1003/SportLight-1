@@ -45,6 +45,18 @@ import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 const playerFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -110,7 +122,7 @@ function ProfileSkeleton() {
 }
 
 export default function ProfilePage() {
-  const { players, updatePlayer } = usePlayers();
+  const { players, updatePlayer, deletePlayer } = usePlayers();
   const { clubs, updateClub } = useClubs();
   const { toast } = useToast();
   const router = useRouter();
@@ -128,13 +140,36 @@ export default function ProfilePage() {
 
   const [currentUser, setCurrentUser] = useState<Player | null>(null);
   const [currentClub, setCurrentClub] = useState<Club | null>(null);
+  const [playerAvatar, setPlayerAvatar] = useState<string | null>(null);
+  const [clubLogo, setClubLogo] = useState<string | null>(null);
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [referenceImage, setReferenceImage] = useState<string | null>(null);
   const [performanceData, setPerformanceData] = useState<PerformanceMetric[]>([]);
 
   const handleSignOut = () => {
     localStorage.removeItem('userRole');
+    localStorage.removeItem('token');
     router.push('/login');
+  };
+
+  const handleDeleteMyProfile = async () => {
+    if (!currentUser) return;
+    try {
+      await deletePlayer(currentUser.id);
+      localStorage.removeItem('token');
+      localStorage.removeItem('userRole');
+      toast({
+        title: "Profile Deleted",
+        description: "Your profile has been removed from MongoDB.",
+      });
+      router.push('/login');
+    } catch (e: any) {
+      toast({
+        variant: "destructive",
+        title: "Delete Failed",
+        description: e.message || "Could not delete profile.",
+      });
+    }
   };
 
   const playerForm = useForm<z.infer<typeof playerFormSchema>>({
@@ -155,64 +190,180 @@ export default function ProfilePage() {
   });
 
   useEffect(() => {
-    if (role === 'player' && players.length > 0) {
-      const user = players[0];
-      setCurrentUser(user);
-      playerForm.reset({
-        ...user,
-        skills: user.skills.join(', '),
-      });
-      setPerformanceData(user.performanceData || []);
-      if (user.achievementsImage) {
-        setGeneratedImage(user.achievementsImage);
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
+
+    if (role === 'player') {
+      if (token) {
+        fetch(`${apiBase}/player/me`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        .then(res => res.ok ? res.json() : null)
+        .then(dbPlayer => {
+          if (dbPlayer) {
+            const playerObj: Player = {
+              id: dbPlayer._id || dbPlayer.id,
+              name: dbPlayer.name || "",
+              sport: dbPlayer.sport || "Football",
+              age: dbPlayer.age || 20,
+              gender: dbPlayer.gender || "Male",
+              location: dbPlayer.location || "",
+              mobile: dbPlayer.mobile || "",
+              height: dbPlayer.height || 0,
+              weight: dbPlayer.weight || 0,
+              dreamClub: dbPlayer.dreamClub || "",
+              skills: dbPlayer.skills || [],
+              achievementsText: dbPlayer.achievementsText || "",
+              avatar: dbPlayer.avatar || `https://picsum.photos/seed/${dbPlayer._id}/200/200`,
+              verified: dbPlayer.profileCompleted || false,
+              achievementsImage: dbPlayer.achievementsImage || "",
+              performanceData: dbPlayer.performanceData || [],
+              creatorEmail: dbPlayer.email || "player@sportlight.com",
+              createdAt: dbPlayer.createdAt || new Date().toISOString(),
+            };
+            setCurrentUser(playerObj);
+            playerForm.reset({
+              ...playerObj,
+              skills: playerObj.skills.join(', '),
+            });
+            setPerformanceData(playerObj.performanceData || []);
+            if (playerObj.avatar) {
+              setPlayerAvatar(playerObj.avatar);
+            }
+            if (playerObj.achievementsImage) {
+              setGeneratedImage(playerObj.achievementsImage);
+            }
+            return;
+          }
+          // Fallback to players[0]
+          if (players.length > 0) {
+            const user = players[0];
+            setCurrentUser(user);
+            playerForm.reset({
+              ...user,
+              skills: user.skills.join(', '),
+            });
+            setPerformanceData(user.performanceData || []);
+            if (user.achievementsImage) {
+              setGeneratedImage(user.achievementsImage);
+            }
+          }
+        })
+        .catch(() => {
+          if (players.length > 0) {
+            const user = players[0];
+            setCurrentUser(user);
+            playerForm.reset({ ...user, skills: user.skills.join(', ') });
+            setPerformanceData(user.performanceData || []);
+          }
+        });
+      } else if (players.length > 0) {
+        const user = players[0];
+        setCurrentUser(user);
+        playerForm.reset({
+          ...user,
+          skills: user.skills.join(', '),
+        });
+        setPerformanceData(user.performanceData || []);
+        if (user.achievementsImage) {
+          setGeneratedImage(user.achievementsImage);
+        }
       }
     }
   }, [role, players, playerForm]);
 
   useEffect(() => {
-    if (role === 'recruiter' && clubs.length > 0) {
-      const club = clubs[0];
-      setCurrentClub(club);
-      clubForm.reset({
-        name: club.name,
-        address: club.address,
-        foundationDate: new Date(club.foundationDate),
-        registrationDate: new Date(club.createdAt),
-        contactPerson: club.contactPerson,
-        contactMobile: club.contactMobile,
-        contactEmail: club.contactEmail,
-      });
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
+
+    if (role === 'recruiter') {
+      if (token) {
+        fetch(`${apiBase}/club/me`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+        .then(res => res.ok ? res.json() : null)
+        .then(dbClub => {
+          if (dbClub) {
+            const clubObj: Club = {
+              id: dbClub._id || dbClub.id,
+              name: dbClub.name || "",
+              league: dbClub.league || "Premier League",
+              location: dbClub.address || dbClub.location || "",
+              description: dbClub.description || "",
+              scoutingFocus: dbClub.scoutingFocus || [],
+              creatorEmail: dbClub.contactEmail || "",
+              logo: dbClub.logo || `https://picsum.photos/seed/${dbClub._id}/200/200`,
+              verified: dbClub.profileCompleted || false,
+              createdAt: dbClub.createdAt || new Date().toISOString(),
+              address: dbClub.address || "",
+              foundationDate: dbClub.foundationDate || new Date().toISOString().split('T')[0],
+              contactPerson: dbClub.contactPerson || "",
+              contactMobile: dbClub.contactMobile || "",
+              contactEmail: dbClub.contactEmail || "",
+            };
+            setCurrentClub(clubObj);
+            if (clubObj.logo) {
+              setClubLogo(clubObj.logo);
+            }
+            clubForm.reset({
+              name: clubObj.name,
+              address: clubObj.address,
+              foundationDate: clubObj.foundationDate ? new Date(clubObj.foundationDate) : new Date(),
+              registrationDate: clubObj.createdAt ? new Date(clubObj.createdAt) : new Date(),
+              contactPerson: clubObj.contactPerson,
+              contactMobile: clubObj.contactMobile,
+              contactEmail: clubObj.contactEmail,
+            });
+            return;
+          }
+          if (clubs.length > 0) {
+            const club = clubs[0];
+            setCurrentClub(club);
+            clubForm.reset({
+              name: club.name,
+              address: club.address,
+              foundationDate: new Date(club.foundationDate),
+              registrationDate: new Date(club.createdAt),
+              contactPerson: club.contactPerson,
+              contactMobile: club.contactMobile,
+              contactEmail: club.contactEmail,
+            });
+          }
+        })
+        .catch(() => {
+          if (clubs.length > 0) {
+            const club = clubs[0];
+            setCurrentClub(club);
+          }
+        });
+      } else if (clubs.length > 0) {
+        const club = clubs[0];
+        setCurrentClub(club);
+        clubForm.reset({
+          name: club.name,
+          address: club.address,
+          foundationDate: new Date(club.foundationDate),
+          registrationDate: new Date(club.createdAt),
+          contactPerson: club.contactPerson,
+          contactMobile: club.contactMobile,
+          contactEmail: club.contactEmail,
+        });
+      }
     }
   }, [role, clubs, clubForm]);
 
   async function onPlayerSubmit(values: z.infer<typeof playerFormSchema>) {
     if (!currentUser) return;
 
-    const achievementImage = generatedImage || referenceImage || currentUser.achievementsImage;
+    const achievementImage = generatedImage || referenceImage || currentUser.achievementsImage || "https://picsum.photos/seed/achievement/600/400";
 
-    if (!values.skills.trim()) {
-        toast({
-            variant: "destructive",
-            title: "Skills required",
-            description: "At least one skill is required.",
-        });
-        playerForm.setError("skills", { message: "At least one skill is required" });
-        return;
-    }
+    const parsedSkills = values.skills ? values.skills.split(",").map((s) => s.trim()).filter(Boolean) : ["General"];
 
-    if (!achievementImage) {
-        toast({
-            variant: "destructive",
-            title: "Achievement image missing",
-            description: "Please generate or upload an image for the player's achievements.",
-        });
-        return;
-    }
-    
     const updatedPlayer = {
       ...currentUser,
       ...values,
-      skills: values.skills.split(",").map((s) => s.trim()),
+      avatar: playerAvatar || currentUser.avatar || `https://picsum.photos/seed/${currentUser.id}/200/200`,
+      skills: parsedSkills,
       achievementsImage: achievementImage,
       performanceData: performanceData,
     };
@@ -220,8 +371,8 @@ export default function ProfilePage() {
     try {
         await updatePlayer(currentUser.id, updatedPlayer);
         toast({
-          title: "Player Profile Updated",
-          description: "Your profile has been successfully saved.",
+          title: "Player Profile Updated & Stored in MongoDB!",
+          description: "Your profile has been successfully saved to the database.",
         });
     } catch(e) {
         console.error(e);
@@ -244,13 +395,14 @@ export default function ProfilePage() {
         contactPerson: values.contactPerson,
         contactMobile: values.contactMobile,
         contactEmail: values.contactEmail,
+        logo: clubLogo || currentClub.logo || `https://picsum.photos/seed/${currentClub.id}/200/200`,
     };
     
     try {
         await updateClub(currentClub.id, updatedClubData);
         toast({
-          title: "Club Profile Updated",
-          description: "The club's profile has been successfully saved.",
+          title: "Club Profile Updated & Stored in MongoDB!",
+          description: "The club's profile has been successfully saved to the database.",
         });
     } catch(e) {
         console.error(e);
@@ -319,6 +471,32 @@ export default function ProfilePage() {
                           </CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-4">
+                          <div className="flex items-center gap-4 p-3 rounded-lg border bg-muted/30">
+                            <div className="relative w-16 h-16 rounded-full overflow-hidden border-2 border-primary shrink-0">
+                              <Image
+                                src={playerAvatar || currentUser.avatar || `https://picsum.photos/seed/${currentUser.id}/200/200`}
+                                alt="Profile Avatar"
+                                fill
+                                className="object-cover"
+                              />
+                            </div>
+                            <div className="flex-1 space-y-1">
+                              <Label htmlFor="player-avatar" className="text-sm font-medium">Profile Photo</Label>
+                              <Input
+                                id="player-avatar"
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                    const reader = new FileReader();
+                                    reader.onloadend = () => setPlayerAvatar(reader.result as string);
+                                    reader.readAsDataURL(file);
+                                  }
+                                }}
+                              />
+                            </div>
+                          </div>
                           <FormField
                             control={playerForm.control}
                             name="name"
@@ -486,8 +664,30 @@ export default function ProfilePage() {
                             )}
                             />
                         </CardContent>
-                        <CardFooter>
+                        <CardFooter className="flex justify-between items-center">
                           <Button type="submit">Save Changes</Button>
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button variant="destructive" type="button" size="sm">
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete Profile
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Delete Your Player Profile?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  This action is permanent and cannot be undone. Your profile data and records will be deleted from MongoDB.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction onClick={handleDeleteMyProfile}>
+                                  Confirm Delete
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
                         </CardFooter>
                       </form>
                     </Form>
@@ -709,7 +909,26 @@ export default function ProfilePage() {
                             </div>
                             <div className="space-y-2">
                               <Label htmlFor="club-logo">Club Stamp (or Logo)</Label>
-                              <Input id="club-logo" type="file" accept="image/*" />
+                              <div className="flex items-center gap-3">
+                                {clubLogo && (
+                                  <div className="relative w-12 h-12 rounded border overflow-hidden shrink-0">
+                                    <Image src={clubLogo} alt="Club logo preview" fill className="object-cover" />
+                                  </div>
+                                )}
+                                <Input
+                                  id="club-logo"
+                                  type="file"
+                                  accept="image/*"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      const reader = new FileReader();
+                                      reader.onloadend = () => setClubLogo(reader.result as string);
+                                      reader.readAsDataURL(file);
+                                    }
+                                  }}
+                                />
+                              </div>
                               <p className="text-xs text-muted-foreground">Upload the club's official logo.</p>
                             </div>
                         </div>

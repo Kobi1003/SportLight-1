@@ -1,4 +1,5 @@
 import Club from "../models/club.js";
+import { saveBase64Image } from "../utils/saveImage.js";
 
 // Get all clubs (public)
 export const getClubs = async (req, res) => {
@@ -25,6 +26,28 @@ export const getMyClub = async (req, res) => {
   }
 };
 
+export const createClub = async (req, res) => {
+  try {
+    const data = { ...req.body };
+    if (data.logo) data.logo = saveBase64Image(data.logo, "logo");
+    if (data.affiliation) data.affiliation = saveBase64Image(data.affiliation, "affiliation");
+    const club = await Club.create(data);
+    res.status(201).json(club);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const getClubById = async (req, res) => {
+  try {
+    const club = await Club.findById(req.params.id);
+    if (!club) return res.status(404).json({ message: "Club not found" });
+    res.status(200).json(club);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // Update club profile
 export const updateClub = async (req, res) => {
   try {
@@ -40,9 +63,23 @@ export const updateClub = async (req, res) => {
       }
     }
 
-    const existingClub = await Club.findById(req.user.profileId);
+    // Convert any base64 images into physical files on disk in uploads/
+    if (data.logo) {
+      data.logo = saveBase64Image(data.logo, "logo");
+    }
+    if (data.affiliation) {
+      data.affiliation = saveBase64Image(data.affiliation, "affiliation");
+    }
+
+    const targetId = (req.params && req.params.id && req.params.id !== 'me') ? req.params.id : req.user?.profileId;
+    if (!targetId) {
+      return res.status(400).json({ message: "No club ID provided" });
+    }
+
+    const existingClub = await Club.findById(targetId);
     if (!existingClub) {
-      return res.status(404).json({ message: "Club not found" });
+      const created = await Club.create({ ...data, _id: targetId });
+      return res.status(200).json({ message: "Club created successfully", club: created });
     }
 
     // Profile completion logic
@@ -56,7 +93,7 @@ export const updateClub = async (req, res) => {
     data.profileCompleted = Boolean(isProfileCompleted);
 
     const updatedClub = await Club.findByIdAndUpdate(
-      req.user.profileId,
+      targetId,
       data,
       { new: true, runValidators: true }
     );

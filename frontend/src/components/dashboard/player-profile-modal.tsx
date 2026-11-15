@@ -18,6 +18,8 @@ import {
 } from "@/components/ui/alert-dialog"
 import { usePlayers } from "@/hooks/use-players";
 import { Progress } from "../ui/progress";
+import { useEffect, useState } from "react";
+import { useToast } from "@/hooks/use-toast";
 
 interface PlayerProfileModalProps {
   player: Player | null;
@@ -39,18 +41,56 @@ const getPerformanceScore = (player: Player): number => {
 
 
 export function PlayerProfileModal({ player, open, onOpenChange }: PlayerProfileModalProps) {
-  const { deletePlayer } = usePlayers();
+  const { deletePlayer, refreshPlayers } = usePlayers();
+  const { toast } = useToast();
+  const [isOwner, setIsOwner] = useState(false);
+  
+  useEffect(() => {
+    if (!player) return;
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    if (!token) {
+      setIsOwner(false);
+      return;
+    }
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      const userRole = localStorage.getItem('userRole');
+
+      const loggedInEmail = (payload.email || '').toLowerCase().trim();
+      const playerEmail = (player.creatorEmail || (player as any).email || '').toLowerCase().trim();
+      const profileId = (payload.profileId || '').toString();
+      const playerId = (player.id || '').toString();
+
+      // Ownership checks:
+      // 1. Matches by MongoDB profileId in JWT
+      const isIdMatch = Boolean(profileId && playerId && profileId === playerId);
+
+      // 2. Matches by email (case-insensitive)
+      const isEmailMatch = Boolean(loggedInEmail && playerEmail && loggedInEmail === playerEmail);
+
+      // 3. Fallback for logged-in player role:
+      // If the user's role is 'player' and the player has their email OR is their own profile ID
+      const isOwnerResult = isIdMatch || isEmailMatch;
+
+      setIsOwner(isOwnerResult);
+    } catch {
+      setIsOwner(false);
+    }
+  }, [player]);
   
   if (!player) return null;
 
-  // Since auth is removed, anyone can delete. In a real app, this would be protected.
-  const isOwner = true; 
   const score = getPerformanceScore(player);
 
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (player && isOwner) {
-      deletePlayer(player.id);
+      await deletePlayer(player.id);
+      await refreshPlayers();
+      toast({
+        title: "Profile Deleted",
+        description: `Player profile for ${player.name} has been deleted from MongoDB.`,
+      });
       onOpenChange(false);
     }
   };

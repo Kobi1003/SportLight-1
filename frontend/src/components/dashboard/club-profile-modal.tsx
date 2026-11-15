@@ -2,7 +2,7 @@ import type { Club } from "@/lib/mock-data";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle, MapPin, Trophy, Users, Briefcase, AtSign } from "lucide-react";
+import { CheckCircle, MapPin, Trophy, Users, AtSign } from "lucide-react";
 import { Button } from "../ui/button";
 
 interface ClubProfileModalProps {
@@ -65,10 +65,7 @@ export function ClubProfileModal({ club, open, onOpenChange }: ClubProfileModalP
                 </div>
             </div>
         </div>
-        <DialogFooter className="sm:justify-between pt-4">
-            <Button>
-                <Briefcase className="mr-2 h-4 w-4" /> Contact Club
-            </Button>
+        <DialogFooter className="sm:justify-end pt-4">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
         </DialogFooter>
       </DialogContent>

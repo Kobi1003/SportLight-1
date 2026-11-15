@@ -7,6 +7,7 @@ const performanceSchema = new mongoose.Schema({
 });
 
 const playerSchema = new mongoose.Schema({
+    email: { type: String },
     name: String,
     sport: String,
     age: Number,
@@ -19,6 +20,7 @@ const playerSchema = new mongoose.Schema({
     skills: [String],
     achievementsText: String,
     achievementsImage: String,
+    avatar: String,
     performanceData: [performanceSchema],
     profileCompleted: { type: Boolean, default: false },
   },
