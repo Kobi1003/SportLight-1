@@ -34,7 +34,8 @@ function ChatSubmitButton() {
 export function Chatbot() {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [state, formAction] = useActionState(handleChat, initialState);
+  const [state, formAction, isPending] = useActionState(handleChat, initialState);
+  const [inputVal, setInputVal] = useState('');
   const formRef = useRef<HTMLFormElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
@@ -42,7 +43,6 @@ export function Chatbot() {
     if (state.response) {
       setMessages((prev) => [...prev, { sender: 'bot', text: state.response as string }]);
     }
-    // We don't handle state.error here, but you could show a toast.
   }, [state]);
 
   useEffect(() => {
@@ -52,16 +52,33 @@ export function Chatbot() {
             viewport.scrollTop = viewport.scrollHeight;
         }
     }
-  }, [messages]);
+  }, [messages, isPending]);
 
   const handleFormSubmit = (formData: FormData) => {
-    const query = formData.get('query') as string;
-    if (query.trim()) {
+    const query = (formData.get('query') as string || inputVal).trim();
+    if (query) {
       setMessages((prev) => [...prev, { sender: 'user', text: query }]);
-      formAction(formData);
+      const fd = new FormData();
+      fd.append('query', query);
+      formAction(fd);
+      setInputVal('');
       formRef.current?.reset();
     }
   };
+
+  const handleQuickQuestion = (q: string) => {
+    setMessages((prev) => [...prev, { sender: 'user', text: q }]);
+    const fd = new FormData();
+    fd.append('query', q);
+    formAction(fd);
+  };
+
+  const suggestions = [
+    "How to scout players?",
+    "Football speed benchmarks",
+    "How to get verified?",
+    "Cricket bowling standards",
+  ];
 
   return (
     <>
@@ -91,10 +108,28 @@ export function Chatbot() {
                 </div>
               </div>
 
+              {messages.length === 0 && (
+                <div className="space-y-2 pt-2">
+                  <p className="text-xs text-muted-foreground font-medium">Suggested questions:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {suggestions.map((s, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => handleQuickQuestion(s)}
+                        className="text-xs bg-muted/70 hover:bg-muted text-foreground px-3 py-1.5 rounded-full border border-border/60 transition-colors text-left"
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {messages.map((message, index) => (
                 <div key={index} className={cn("flex items-start gap-3", message.sender === 'user' && 'justify-end')}>
                   {message.sender === 'bot' && (
-                    <Avatar className="w-8 h-8 border-2 border-primary">
+                    <Avatar className="w-8 h-8 border-2 border-primary shrink-0">
                         <AvatarFallback><Bot size={16}/></AvatarFallback>
                     </Avatar>
                   )}
@@ -102,15 +137,26 @@ export function Chatbot() {
                     "rounded-lg p-3 max-w-[80%]",
                     message.sender === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'
                   )}>
-                    <p className="text-sm">{message.text}</p>
+                    <p className="text-sm whitespace-pre-line">{message.text}</p>
                   </div>
                    {message.sender === 'user' && (
-                    <Avatar className="w-8 h-8">
+                    <Avatar className="w-8 h-8 shrink-0">
                         <AvatarFallback><User size={16}/></AvatarFallback>
                     </Avatar>
                   )}
                 </div>
               ))}
+
+              {isPending && (
+                <div className="flex items-start gap-3">
+                  <Avatar className="w-8 h-8 border-2 border-primary shrink-0">
+                    <AvatarFallback><Bot size={16} className="animate-spin" /></AvatarFallback>
+                  </Avatar>
+                  <div className="bg-muted rounded-lg p-3">
+                    <p className="text-xs text-muted-foreground animate-pulse">Sportlight AI is thinking...</p>
+                  </div>
+                </div>
+              )}
             </div>
           </ScrollArea>
           <div className="p-4 bg-background border-t">
@@ -119,7 +165,13 @@ export function Chatbot() {
               action={handleFormSubmit}
               className="flex items-center gap-2"
             >
-              <Input name="query" placeholder="Ask a question..." autoComplete="off" />
+              <Input
+                name="query"
+                placeholder="Ask a question..."
+                autoComplete="off"
+                value={inputVal}
+                onChange={(e) => setInputVal(e.target.value)}
+              />
               <ChatSubmitButton />
             </form>
           </div>

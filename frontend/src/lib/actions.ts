@@ -5,6 +5,7 @@ import { aiVideoChecker } from "@/ai/flows/ai-video-checker";
 import { getVideoRecordingGuidance } from "@/ai/flows/video-recording-guidance";
 import { generateAchievementImage } from "@/ai/flows/generate-achievement-image";
 import { generateSportsVideo } from "@/ai/flows/generate-sports-video";
+import { generateSportlightResponse } from "./sportlight-assistant";
 import { z } from "zod";
 
 const chatSchema = z.object({
@@ -19,24 +20,35 @@ export async function handleChat(prevState: any, formData: FormData) {
   if (!validatedFields.success) {
     return {
       ...prevState,
-      error: 'Invalid input.',
+      error: 'Please enter a valid message.',
     };
   }
 
-  try {
-    const result = await aiChatbot(validatedFields.data);
-    return {
-      ...prevState,
-      response: result.response,
-      error: null,
-    };
-  } catch (error) {
-    return {
-      ...prevState,
-      response: null,
-      error: 'Failed to get response from AI.',
-    };
+  const query = validatedFields.data.query;
+
+  // If Gemini API key is configured, use live AI
+  if (process.env.GEMINI_API_KEY || process.env.GOOGLE_GENAI_API_KEY) {
+    try {
+      const result = await aiChatbot(validatedFields.data);
+      if (result?.response) {
+        return {
+          ...prevState,
+          response: result.response,
+          error: null,
+        };
+      }
+    } catch (error) {
+      console.warn("Live AI fallback triggered:", error);
+    }
   }
+
+  // Intelligent built-in sports assistant fallback
+  const reply = generateSportlightResponse(query);
+  return {
+    ...prevState,
+    response: reply,
+    error: null,
+  };
 }
 
 const guidanceSchema = z.object({
