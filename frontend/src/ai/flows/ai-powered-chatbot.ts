@@ -13,6 +13,7 @@ import {z} from 'genkit';
 
 const AIChatbotInputSchema = z.object({
   query: z.string().describe('The user query or question.'),
+  liveContext: z.string().optional().describe('Real-time database records of players and clubs on the platform.'),
 });
 export type AIChatbotInput = z.infer<typeof AIChatbotInputSchema>;
 
@@ -29,12 +30,21 @@ const aiChatbotPrompt = ai.definePrompt({
   name: 'aiChatbotPrompt',
   input: {schema: AIChatbotInputSchema},
   output: {schema: AIChatbotOutputSchema},
-  prompt: `You are a helpful AI chatbot designed to answer questions from players and club representatives related to a sports talent platform.
+  prompt: `You are Sportlight's official AI assistant.
+You answer questions for athletes, fans, and club scouts based strictly on the REAL LIVE data currently stored in the website database.
 
-  Your goal is to provide informative and concise responses to their queries.
+{{#if liveContext}}
+{{{liveContext}}}
+{{/if}}
 
-  User Query: {{{query}}}
-  `,
+Guidelines:
+1. When asked what clubs are currently present on the website, list the exact clubs from the live data above (e.g. Manchester United, FC Barcelona, Mumbai Indians, etc.).
+2. When asked what players are present on the website, list the exact players from the live data above (e.g. Alex Johnson, Priya Sharma, etc.).
+3. Do not make up fake clubs or players that are not in the database.
+4. Keep responses clear, helpful, and formatted with markdown bullet points.
+
+User Query: {{{query}}}
+`,
 });
 
 const aiChatbotFlow = ai.defineFlow(

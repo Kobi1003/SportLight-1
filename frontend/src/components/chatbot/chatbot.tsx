@@ -74,10 +74,10 @@ export function Chatbot() {
   };
 
   const suggestions = [
-    "How to scout players?",
+    "What clubs are present on the website?",
+    "What players are present on the website?",
+    "Who plays football?",
     "Football speed benchmarks",
-    "How to get verified?",
-    "Cricket bowling standards",
   ];
 
   return (

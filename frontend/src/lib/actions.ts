@@ -5,7 +5,7 @@ import { aiVideoChecker } from "@/ai/flows/ai-video-checker";
 import { getVideoRecordingGuidance } from "@/ai/flows/video-recording-guidance";
 import { generateAchievementImage } from "@/ai/flows/generate-achievement-image";
 import { generateSportsVideo } from "@/ai/flows/generate-sports-video";
-import { generateSportlightResponse } from "./sportlight-assistant";
+import { generateDatabaseGroundedResponse, fetchLiveDatabaseData, buildLiveDatabaseContext } from "./sportlight-assistant";
 import { z } from "zod";
 
 const chatSchema = z.object({
@@ -26,10 +26,15 @@ export async function handleChat(prevState: any, formData: FormData) {
 
   const query = validatedFields.data.query;
 
-  // If Gemini API key is configured, use live AI
+  // If Gemini API key is configured, feed live website database context to AI
   if (process.env.GEMINI_API_KEY || process.env.GOOGLE_GENAI_API_KEY) {
     try {
-      const result = await aiChatbot(validatedFields.data);
+      const liveData = await fetchLiveDatabaseData();
+      const liveContext = buildLiveDatabaseContext(liveData);
+      const result = await aiChatbot({
+        query: validatedFields.data.query,
+        liveContext: liveContext,
+      });
       if (result?.response) {
         return {
           ...prevState,
@@ -42,8 +47,8 @@ export async function handleChat(prevState: any, formData: FormData) {
     }
   }
 
-  // Intelligent built-in sports assistant fallback
-  const reply = generateSportlightResponse(query);
+  // Live database-grounded engine (reflects live MongoDB data)
+  const reply = await generateDatabaseGroundedResponse(query);
   return {
     ...prevState,
     response: reply,
