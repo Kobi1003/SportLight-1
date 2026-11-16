@@ -36,12 +36,13 @@ export async function fetchLiveDatabaseData(): Promise<LiveData> {
  * Used when Gemini or an LLM is active.
  */
 export function buildLiveDatabaseContext(data: LiveData): string {
-  const clubSummaries = data.clubs.map(c => 
-    `• ${c.name} | League: ${c.league || 'General'} | Location: ${c.location || c.address || 'N/A'} | Scouting Focus: ${(c.scoutingFocus || []).join(', ') || 'General Talent'} | Contact: ${c.contactEmail || 'N/A'}`
-  ).join('\n');
+  const clubSummaries = data.clubs.map(c => {
+    const owner = getClubOwnerName(c);
+    return `• ${c.name} | Owner / Representative: ${owner} | League: ${c.league || 'General'} | Location: ${c.location || c.address || 'N/A'} | Scouting Focus: ${(c.scoutingFocus || []).join(', ') || 'General Talent'} | Contact: ${c.contactEmail || 'N/A'}`;
+  }).join('\n');
 
   const playerSummaries = data.players.map(p => 
-    `• ${p.name} | Sport: ${p.sport || 'N/A'} | Age: ${p.age || 'N/A'} | Skills: ${(p.skills || []).join(', ') || 'N/A'} | Dream Club: ${p.dreamClub || 'None'} | Verified: ${p.profileCompleted ? 'Yes' : 'No'}`
+    `• ${p.name} | Sport: ${p.sport || 'N/A'} | Age: ${p.age || 'N/A'} | Location: ${p.location || 'N/A'} | Skills: ${(p.skills || []).join(', ') || 'N/A'} | Dream Club: ${p.dreamClub || 'None'} | Verified: ${p.profileCompleted ? 'Yes' : 'No'}`
   ).join('\n');
 
   return `=== CURRENT LIVE WEBSITE DATA (from MongoDB) ===
@@ -54,13 +55,76 @@ ${playerSummaries || 'No players currently registered.'}
 }
 
 /**
- * Directly answers user questions based on the live data from the website database.
+ * Extracts the most accurate owner/representative name for a club
+ */
+export function getClubOwnerName(club: any): string {
+  if (club.contactPerson && club.contactPerson.trim() && club.contactPerson.trim().toLowerCase() !== 'n/a') {
+    return club.contactPerson.trim();
+  }
+  // If the club name has an apostrophe s like "Biswanath Kobi's Club"
+  const match = club.name?.match(/^(.+?)('s|’s)\s+club$/i);
+  if (match) {
+    return match[1].trim();
+  }
+  if (club.contactEmail) {
+    const emailPrefix = club.contactEmail.split('@')[0];
+    return emailPrefix.replace(/[._]/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
+  }
+  return "Registered Club Administrator";
+}
+
+/**
+ * Checks if the user query is within the domain of Sportlight, sports, players, or clubs.
+ */
+function isDomainQuery(query: string, data: LiveData): boolean {
+  const q = query.toLowerCase();
+
+  // 1. Common greetings or platform interactions
+  if (/^(hi|hello|hey|greetings|hola|help|good\s+(morning|afternoon|evening)|thank(s|\s+you)|bye|goodbye)$/i.test(q)) {
+    return true;
+  }
+
+  // 2. Domain keywords
+  const sportsKeywords = [
+    "sport", "football", "cricket", "player", "club", "team", "scout", "recruit",
+    "benchmark", "speed", "stamina", "metric", "profile", "avatar", "photo",
+    "achievement", "video", "drill", "trial", "league", "owner", "who owns",
+    "contact", "barcelona", "manchester", "juventus", "mumbai", "kobi", "sharma",
+    "johnson", "sterling", "verma", "login", "signup", "dashboard", "tools",
+    "verified", "skills", "delete", "account", "striker", "batsman", "bowler",
+    "pitch", "match", "academy", "contract", "stats"
+  ];
+
+  if (sportsKeywords.some(kw => q.includes(kw))) {
+    return true;
+  }
+
+  // 3. Any club name or player name currently in database
+  for (const c of data.clubs) {
+    const cName = (c.name || '').toLowerCase();
+    if (cName && q.includes(cName)) return true;
+    const parts = cName.split(/[\s'-]+/);
+    if (parts.some((p: string) => p.length > 3 && q.includes(p))) return true;
+  }
+
+  for (const p of data.players) {
+    const pName = (p.name || '').toLowerCase();
+    if (pName && q.includes(pName)) return true;
+    const parts = pName.split(/[\s'-]+/);
+    if (parts.some((p: string) => p.length > 3 && q.includes(p))) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Directly answers user questions based on live MongoDB data with strict guardrails.
  */
 export async function generateDatabaseGroundedResponse(userQuery: string): Promise<string> {
   const query = userQuery.toLowerCase().trim();
   const data = await fetchLiveDatabaseData();
 
-  // Deduplicate clubs by name (case-insensitive)
+  // Deduplicate clubs
   const uniqueClubsMap = new Map();
   for (const c of data.clubs) {
     const cleanName = (c.name || '').trim();
@@ -68,9 +132,10 @@ export async function generateDatabaseGroundedResponse(userQuery: string): Promi
       uniqueClubsMap.set(cleanName.toLowerCase(), c);
     }
   }
-  const uniqueClubs = Array.from(uniqueClubsMap.values());
+  // Sort clubs by name length descending so longer/more specific names match first
+  const uniqueClubs = Array.from(uniqueClubsMap.values()).sort((a, b) => (b.name?.length || 0) - (a.name?.length || 0));
 
-  // Deduplicate players by name and sport
+  // Deduplicate players
   const uniquePlayersMap = new Map();
   for (const p of data.players) {
     const cleanName = (p.name || '').trim();
@@ -80,7 +145,42 @@ export async function generateDatabaseGroundedResponse(userQuery: string): Promi
   }
   const uniquePlayers = Array.from(uniquePlayersMap.values());
 
-  // 1. "What clubs are present on the website?" / "List clubs" / "Show clubs"
+  // --- GUARDRAIL: OUT OF RANGE QUERIES ---
+  if (!isDomainQuery(query, data)) {
+    return "No, I can't answer this question. I can only assist with questions regarding the Sportlight platform, its registered players, clubs, and sports scouting features.";
+  }
+
+  // --- 1. CLUB OWNERSHIP QUERY ---
+  // e.g. "who is the owner of Biswanath Kobi's Club", "who owns FC Barcelona", "who is the owner of Mumbai Indians"
+  if (
+    query.includes("owner") || 
+    query.includes("owns") || 
+    query.includes("who is the owner") || 
+    query.includes("who founded") || 
+    query.includes("contact person")
+  ) {
+    // Find matching club in database
+    for (const club of uniqueClubs) {
+      const cName = (club.name || '').toLowerCase();
+      const parts = cName.split(/[\s'’]+/).filter((p: string) => p.length > 2 && p !== 'club' && p !== 'fc' && p !== 'the');
+
+      const matchesFullName = cName && query.includes(cName);
+      const matchesParts = parts.length > 0 && parts.every((p: string) => query.includes(p));
+
+      if (matchesFullName || matchesParts) {
+        const ownerName = getClubOwnerName(club);
+        return `The owner of **${club.name}** is **${ownerName}**.`;
+      }
+    }
+
+    // If they asked generally "who are the owners of the clubs"
+    if (query.includes("clubs") || query.includes("all")) {
+      const list = uniqueClubs.map(c => `• **${c.name}**: Owned / represented by **${getClubOwnerName(c)}**`).join('\n');
+      return `Here are the owners and representatives of the clubs on Sportlight:\n\n${list}`;
+    }
+  }
+
+  // --- 2. LIST ALL CLUBS ---
   if (
     query.includes("club") && 
     (query.includes("present") || query.includes("what are") || query.includes("which") || query.includes("list") || query.includes("available") || query.includes("currently") || query.includes("all") || query.includes("show"))
@@ -90,15 +190,15 @@ export async function generateDatabaseGroundedResponse(userQuery: string): Promi
     }
 
     const clubList = uniqueClubs.map((c, i) => {
-      const focus = c.scoutingFocus && c.scoutingFocus.length > 0 ? ` (Scouting: ${c.scoutingFocus.join(', ')})` : '';
+      const owner = getClubOwnerName(c);
       const league = c.league ? ` - ${c.league}` : '';
-      return `${i + 1}. **${c.name}**${league}${focus}`;
+      return `${i + 1}. **${c.name}**${league} (Owner: ${owner})`;
     }).join('\n');
 
     return `Currently, there are **${uniqueClubs.length} clubs** registered on the Sportlight website:\n\n${clubList}\n\nYou can scout them or view their full details in the **Recruiter View** on the Dashboard!`;
   }
 
-  // 2. "What players are present on the website?" / "List players" / "Who is registered"
+  // --- 3. LIST ALL PLAYERS ---
   if (
     query.includes("player") && 
     (query.includes("present") || query.includes("what are") || query.includes("which") || query.includes("who are") || query.includes("list") || query.includes("available") || query.includes("currently") || query.includes("all") || query.includes("show"))
@@ -116,10 +216,11 @@ export async function generateDatabaseGroundedResponse(userQuery: string): Promi
     return `Currently, there are **${uniquePlayers.length} players** registered on the Sportlight website:\n\n${playerList}\n\nYou can click on any player card on the **Dashboard** to view their benchmarks and bio!`;
   }
 
-  // 3. Specific player query: check if user asked about a specific person in the DB
+  // --- 4. SPECIFIC PLAYER DETAILS ---
   for (const player of uniquePlayers) {
     const nameLower = (player.name || '').toLowerCase();
-    if (nameLower && (query.includes(nameLower) || nameLower.split(' ').some(part => part.length > 3 && query.includes(part)))) {
+    const parts = nameLower.split(/\s+/).filter((p: string) => p.length > 2);
+    if (nameLower && (query.includes(nameLower) || (parts.length > 1 && parts.every((p: string) => query.includes(p))))) {
       const skillsStr = (player.skills || []).join(', ') || 'General';
       const statsStr = player.performanceData && player.performanceData.length > 0
         ? player.performanceData.map((d: any) => `${d.metric}: ${d.value} ${d.unit}`).join(' | ')
@@ -129,16 +230,18 @@ export async function generateDatabaseGroundedResponse(userQuery: string): Promi
     }
   }
 
-  // 4. Specific club query: check if user asked about a specific club in the DB
+  // --- 5. SPECIFIC CLUB DETAILS ---
   for (const club of uniqueClubs) {
     const nameLower = (club.name || '').toLowerCase();
-    if (nameLower && (query.includes(nameLower) || nameLower.split(' ').some(part => part.length > 4 && query.includes(part)))) {
+    const parts = nameLower.split(/[\s'’]+/).filter((p: string) => p.length > 3 && p !== 'club');
+    if (nameLower && (query.includes(nameLower) || (parts.length > 0 && parts.every((p: string) => query.includes(p))))) {
       const focusStr = (club.scoutingFocus || []).join(', ') || 'All positions';
-      return `Here are the details for **${club.name}** on Sportlight:\n• **League**: ${club.league || 'Not specified'}\n• **Location / Address**: ${club.address || club.location || 'Not specified'}\n• **Scouting Focus**: ${focusStr}\n• **Contact Person**: ${club.contactPerson || 'Official Representative'}\n• **Contact Email**: ${club.contactEmail || 'N/A'}\n• **About**: ${club.description || 'Verified Club on Sportlight'}`;
+      const owner = getClubOwnerName(club);
+      return `Here are the details for **${club.name}** on Sportlight:\n• **Owner / Representative**: ${owner}\n• **League**: ${club.league || 'Not specified'}\n• **Location / Address**: ${club.address || club.location || 'Not specified'}\n• **Scouting Focus**: ${focusStr}\n• **Contact Email**: ${club.contactEmail || 'N/A'}\n• **About**: ${club.description || 'Verified Club on Sportlight'}`;
     }
   }
 
-  // 5. Sport filter query: "who plays football", "who plays cricket"
+  // --- 6. SPORT FILTER QUERIES ---
   if (query.includes("football") && (query.includes("who") || query.includes("player") || query.includes("play"))) {
     const footballPlayers = uniquePlayers.filter(p => (p.sport || '').toLowerCase() === 'football');
     if (footballPlayers.length === 0) return "Currently, there are no football players registered on the platform.";
@@ -153,13 +256,13 @@ export async function generateDatabaseGroundedResponse(userQuery: string): Promi
     return `Here are the cricket players currently on Sportlight:\n\n${names}`;
   }
 
-  // 6. Scouting query: "which club is looking for midfielders / defenders / strikers"
+  // --- 7. SCOUTING QUERIES ---
   if (query.includes("scout") || query.includes("looking for") || query.includes("need")) {
     const matches: string[] = [];
     for (const club of uniqueClubs) {
       const focusList = (club.scoutingFocus || []).map((f: string) => f.toLowerCase());
       if (focusList.some((f: string) => query.includes(f))) {
-        matches.push(`• **${club.name}** is actively scouting: ${(club.scoutingFocus || []).join(', ')}`);
+        matches.push(`• **${club.name}** (Owner: ${getClubOwnerName(club)}) is scouting: ${(club.scoutingFocus || []).join(', ')}`);
       }
     }
     if (matches.length > 0) {
@@ -167,26 +270,18 @@ export async function generateDatabaseGroundedResponse(userQuery: string): Promi
     }
   }
 
-  // 7. Total counts
-  if (query.includes("how many") && (query.includes("club") || query.includes("player"))) {
-    return `According to our live database right now, Sportlight has **${uniquePlayers.length} players** and **${uniqueClubs.length} clubs** registered.`;
-  }
-
-  // 8. Greetings
-  if (/^(hi|hello|hey|greetings|hola|good morning|good evening|good afternoon)/i.test(query)) {
-    const clubSample = uniqueClubs.slice(0, 3).map(c => c.name).join(', ');
-    const playerSample = uniquePlayers.slice(0, 3).map(p => p.name).join(', ');
-    return `Hello! I am your Sportlight AI Assistant, connected live to our database.\n\nCurrently, we have **${uniqueClubs.length} clubs** (including ${clubSample || 'top teams'}) and **${uniquePlayers.length} players** (including ${playerSample || 'rising athletes'}) active on the website.\n\nAsk me about any player, club, or fitness benchmark!`;
-  }
-
-  // 9. Benchmarks & Performance
+  // --- 8. BENCHMARKS ---
   if (query.includes("benchmark") || query.includes("speed") || query.includes("metric") || query.includes("standard")) {
     return "Sportlight tracks standardized athletic benchmarks:\n• **Football**: Sprint Speed (avg ~30 km/h for pro wingers), Shot Accuracy (target >80%), and Distance Covered.\n• **Cricket**: Top Bowling Speed (fast bowlers aim for 130+ kph, medium 115-125 kph), and Batting Average.\n\nYou can benchmark your stats under the **Performance** tab in your Profile!";
   }
 
-  // 10. General fallback grounded in live data
-  const sampleClubs = uniqueClubs.slice(0, 3).map(c => c.name).join(', ');
-  const samplePlayers = uniquePlayers.slice(0, 3).map(p => p.name).join(', ');
+  // --- 9. GREETINGS ---
+  if (/^(hi|hello|hey|greetings|hola|good morning|good evening|good afternoon)/i.test(query)) {
+    const sampleClubs = uniqueClubs.slice(0, 3).map(c => c.name).join(', ');
+    const samplePlayers = uniquePlayers.slice(0, 3).map(p => p.name).join(', ');
+    return `Hello! I am your Sportlight AI Assistant, connected live to our database.\n\nCurrently, we have **${uniqueClubs.length} clubs** (like ${sampleClubs}) and **${uniquePlayers.length} players** (like ${samplePlayers}) active on the website.\n\nAsk me about any player, club, club owner, or fitness benchmark!`;
+  }
 
-  return `I am connected directly to the Sportlight database. Currently on the website we have **${uniqueClubs.length} clubs** (like ${sampleClubs}) and **${uniquePlayers.length} players** (like ${samplePlayers}).\n\nYou can ask me:\n• *"What clubs are present on the website?"*\n• *"What players are present on the website?"*\n• *"Who plays football or cricket?"*\n• *"Tell me about ${samplePlayers ? samplePlayers.split(',')[0] : 'a player'}"*`;
+  // Default response for in-domain queries
+  return "No, I can't answer this question. I can only assist with questions regarding the Sportlight platform, its registered players, clubs, and sports scouting features.";
 }
